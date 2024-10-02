@@ -1,0 +1,154 @@
+Description: AAF Networking Template
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/22 
+
+#Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: eu-west-2a
+      MapPublicIpOnLaunch: true
+      CidrBlock: 10.0.0.0/24
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public Subnet A
+
+#InternetGateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+#InternetGatewayAttachment
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+#PublucRouteTable
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+#PublicRoute
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+#SubnetRouteTableAssocaition
+  RouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+
+#EC2 setup
+
+#assigning an IP address for our EC2 instance once it has been deployed
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+#Associating our IP address with our Network interface card
+  MyEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: eipalloc-01f959dc67f22cf0c
+      ####
+      NetworkInterfaceId: !Ref NetworkInterface 
+
+#creating a network interface card for our EC2 instance so that it can use the internet
+  NetworkInterface: 
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      GroupSet:
+        - !Ref SecurityGroup #referencing the future security group
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for the EC2 instance
+      GroupName: aaf-security-group
+      VpcId: !Ref VPC
+#this is the inbound rules
+      SecurityGroupIngress:
+        - Description: "Allow inbound traffic"
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: ssh
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - Description: "node-application"
+          IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0
+
+#this is the outbound rules
+      SecurityGroupEgress:
+        - Description: "Allow outbound traffic"
+          IpProtocol: "-1"
+          FromPort: 0
+          ToPort: 0
+          CidrIp: 0.0.0.0/0
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+   
+    Properties:
+      
+      InstanceType: t3.micro
+     
+      ImageId: ami-09ee0944866c73f62
+      NetworkInterfaces:
+        - DeviceIndex: "0"
+          NetworkInterfaceId: !Ref NetworkInterface
+      
+        ###the userdata script is kind of a script that runs on the ec2 instance
+      
+      
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          curl https://github.com/bm-warwick.keys > /home/ec2-user/.ssh/authorized_keys 
+          ssh-keyscan github.com >> /home/ec2-user/.ssh/known_hosts
+
+          yum -y update 
+          yum install -y git 
+
+
+          while [ ! -f /home/ec2-user/ec2-setup.sh ]
+          do
+              sleep 1
+          done
+          while [ ! -f /home/ec2-user/.ssh/ec2_to_github ]
+          do
+              sleep 1
+          done
+          
+          sudo -u ec2-user bash /home/ec2-user/ec2-setup.sh
+      
+      Tags:
+        - Key: Name
+          Value: bm-ec2
+
